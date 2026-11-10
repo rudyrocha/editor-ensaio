@@ -1,6 +1,6 @@
 """Testes NAO DESTRUTIVOS: usam apenas TemporaryDirectory.
 
-Executar numa COPIA de codigo v3.1.3. Fonte via ENSAIO_SOURCE_DIR ou ao lado de tests/.
+Executar numa COPIA de codigo v3.2.0. Fonte via ENSAIO_SOURCE_DIR ou ao lado de tests/.
 Nao aponta para D: nem instala dependencias e nao exige FFmpeg.
 """
 from __future__ import annotations
@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SRC = Path(os.environ.get('ENSAIO_SOURCE_DIR', str(Path(__file__).resolve().parent.parent))).resolve()
+SRC = Path(os.environ.get('ENSAIO_SOURCE_DIR', str(Path(__file__).resolve().parent.parent / 'app'))).resolve()
 if not (SRC / 'ensaio.py').is_file():
     raise RuntimeError('Coloque a pasta tests junto a ensaio.py (em COPIA de teste) ou configure ENSAIO_SOURCE_DIR.')
 sys.path.insert(0, str(SRC))
@@ -22,7 +22,7 @@ def cfg(root: Path) -> ensaio.Config:
     return ensaio.Config(
         raiz=root, pasta_brutas=root/'brutas', pasta_processadas=root/'processadas',
         pasta_referencias=root/'referencias', pasta_output=root/'output',
-        pasta_revisao=root/'_sistema'/'revisao', pasta_trabalho=root/'_sistema'/'trabalho',
+        pasta_revisao=root/'_sistema'/'revisao', pasta_trabalho=root/'processadas',
         pasta_dados=root/'_sistema'/'dados', pasta_aprendizado=root/'_sistema'/'dados'/'aprendizado',
         logo=root/'_sistema'/'assets'/'Logo.jpg')
 
@@ -75,7 +75,7 @@ class Tests(unittest.TestCase):
 
     def test_05_reparar_manifesto_apos_migracao(self):
         c = cfg(self.root)
-        master = c.pasta_trabalho/'261001'/'master.wav'
+        master = ensaio.work_dir_for_date(c,'261001')/'master.wav'
         master.parent.mkdir(parents=True)
         master.write_bytes(b'fake master; no audio processing')
         raw = c.pasta_brutas/'261001_0307.wav'
@@ -94,7 +94,7 @@ class Tests(unittest.TestCase):
 
     def test_06_reparar_manifesto_idempotente(self):
         c=cfg(self.root)
-        master=c.pasta_trabalho/'261001'/'master.wav'
+        master=ensaio.work_dir_for_date(c,'261001')/'master.wav'
         master.parent.mkdir(parents=True)
         master.write_bytes(b'a')
         p=self.root/'manifesto.json'
