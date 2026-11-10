@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Editor de ensaios</title>
+  <link rel="stylesheet" href="/interface.css?v=3.0">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Diógenes · automação do ensaio</p>
+      <h1>Editor de ensaios</h1>
+      <p id="subtitle" class="subtitle">Carregando estado do sistema…</p>
+    </div>
+    <div class="brand-side">
+      <img class="brand-logo" src="/logo?v=3.0" alt="Logo da banda" onerror="this.style.display='none'">
+      <div class="privacy">Local e offline</div>
+    </div>
+  </header>
+
+  <main>
+    <section id="startPanel" class="panel start-panel">
+      <div class="start-copy">
+        <h2>Novo ensaio</h2>
+        <p id="rawStatus">Verificando a pasta de gravações brutas…</p>
+        <p id="referenceStatus" class="muted"></p>
+      </div>
+      <div class="start-actions">
+        <button id="startAnalysisButton" class="primary" type="button">Iniciar análise</button>
+        <button id="identifyButton" class="secondary hidden" type="button">Identificar músicas novamente</button>
+        <button id="closeTopButton" class="secondary" type="button">Encerrar</button>
+      </div>
+    </section>
+
+    <div id="errorBox" class="message error hidden"></div>
+    <div id="successBox" class="message success hidden"></div>
+
+    <section id="progressPanel" class="panel progress hidden">
+      <div class="progress-head">
+        <div>
+          <h2 id="progressTitle">Processando…</h2>
+          <p id="progressText">Aguarde.</p>
+        </div>
+        <div id="spinner" class="spinner"></div>
+      </div>
+      <pre id="logBox"></pre>
+    </section>
+
+    <div id="reviewWorkspace" class="hidden">
+      <section class="intro panel">
+        <div>
+          <h2>Revisão e identificação</h2>
+          <p>Escute cada faixa, confirme o nome sugerido, avalie a execução e ajuste os cortes. Para dividir, posicione a timeline no ponto desejado. Também é possível unir uma faixa à seguinte.</p>
+        </div>
+        <div class="legend">
+          <span><b>Incluir</b> envia a faixa ao vídeo</span>
+          <span><b>Referência</b> alimenta o reconhecimento futuro</span>
+          <span><b>Nome sugerido</b> será aprendido como correto se permanecer inalterado na finalização</span>
+        </div>
+      </section>
+
+      <section id="tracks" class="tracks" aria-live="polite"></section>
+
+      <section class="panel final-options">
+        <label class="switch-line">
+          <input id="moveRaw" type="checkbox" checked>
+          <span>Mover os WAV brutos para <code>processadas</code> após sucesso</span>
+        </label>
+        <p>As referências marcadas serão incorporadas apenas após uma finalização bem-sucedida. A descrição do vídeo incluirá as observações preenchidas nas faixas.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer id="actionsFooter" class="actions hidden">
+    <div id="summary">Carregando…</div>
+    <div class="buttons">
+      <button id="closeButton" class="secondary" type="button">Encerrar interface</button>
+      <button id="saveButton" class="secondary" type="button">Salvar alterações</button>
+      <button id="finalizeButton" class="primary" type="button">Salvar e gerar vídeo</button>
+    </div>
+  </footer>
+
+  <script src="/interface.js?v=3.0"></script>
+</body>
+</html>
