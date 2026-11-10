@@ -1,0 +1,19 @@
+# Arquivos e dados locais do editor
+**/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+brutas/
+processadas/
+output/
+referencias/
+_sistema/dados/
+_sistema/revisao/
+_sistema/logs/
+_sistema/assets/
+*.wav
+*.wave
+*.mp3
+*.mp4
+*.rar
+*.zip
