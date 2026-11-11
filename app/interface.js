@@ -568,9 +568,14 @@ async function startAnalysis() {
   if (state.overview?.revisao_disponivel) {
     if (!window.confirm("Iniciar uma nova análise? A revisão atual será preservada no histórico e substituída pela nova análise.")) return;
   }
+  const pendentes = state.overview?.temporarios_pendentes;
+  if (pendentes && !window.confirm(
+    `Existe uma análise interrompida em ${pendentes}.\n\n` +
+    "Deseja reiniciar? Os arquivos intermediários antigos serão preservados com nome de recuperação e uma nova análise será iniciada."
+  )) return;
   setInterfaceBusy(true);
   try {
-    await api("/api/analisar", {});
+    await api("/api/analisar", {recomecar: Boolean(pendentes)});
     state.processType = "analise";
     progressPanel.classList.remove("hidden");
     progressTitle.textContent = "Analisando gravações…";
