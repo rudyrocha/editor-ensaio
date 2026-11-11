@@ -1,6 +1,6 @@
 """Testes NAO DESTRUTIVOS: usam apenas TemporaryDirectory.
 
-Executar numa COPIA de codigo v3.2.0. Fonte via ENSAIO_SOURCE_DIR ou ao lado de tests/.
+Executar numa COPIA de codigo v3.3.0. Fonte via ENSAIO_SOURCE_DIR ou ao lado de tests/.
 Nao aponta para D: nem instala dependencias e nao exige FFmpeg.
 """
 from __future__ import annotations
@@ -58,15 +58,15 @@ class Tests(unittest.TestCase):
         p = self.root/'capitulos.txt'
         ensaio.write_chapters(p, [seg(end=75), seg(order=2, start=75, end=170, title='Bohemia', quality='com erros')])
         lines = p.read_text(encoding='utf-8').splitlines()
-        self.assertEqual(lines[0], '00:00 Boa Viagem, boa (1m15)')
-        self.assertEqual(lines[1], '01:15 Bohemia, com erros (1m35)')
+        self.assertEqual(lines[0], '00:00 Boa Viagem — boa (1m15)')
+        self.assertEqual(lines[1], '01:15 Bohemia — com erros (1m35)')
 
-    def test_03_descricao_observacoes_separadas(self):
+    def test_03_descricao_observacoes_na_linha_do_capitulo(self):
         p = self.root/'descricao.txt'
         ensaio.write_video_description(p, [seg(end=75, obs='Erro no refrão')])
         content = p.read_text(encoding='utf-8')
-        self.assertTrue(content.startswith('00:00 Boa Viagem, boa (1m15)\n'))
-        self.assertIn('\n\nObservações:\nBoa Viagem — Erro no refrão\n', content)
+        self.assertTrue(content.startswith('00:00 Boa Viagem — boa · Erro no refrão (1m15)\n'))
+        self.assertNotIn('Observações:', content)
 
     def test_04_descricao_sem_observacoes(self):
         p = self.root/'descricao.txt'
