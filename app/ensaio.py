@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Iterable, Sequence
 
-APP_VERSION = "3.2.1"
+APP_VERSION = "3.3.0"
 DATE_RE = re.compile(r"^(?P<date>\d{6})")
 AUDIO_EXTENSIONS = {".wav", ".wave"}
 
@@ -115,6 +115,8 @@ class Segment:
     score_identificacao: float = 0.0
     segunda_opcao: str = ""
     score_segunda_opcao: float = 0.0
+    terceira_opcao: str = ""
+    score_terceira_opcao: float = 0.0
     identificacao_aplicada: bool = False
 
 
@@ -204,7 +206,20 @@ def setup_logging(log_path: Path, verbose: bool) -> None:
     )
 
 
+def _hidden_startupinfo():
+    """Windows: solicita janela oculta mesmo quando o subprocesso usa shell externo."""
+    if sys.platform != "win32":
+        return None
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = 0
+    return startup
+
+
 def run_command(cmd: Sequence[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    cmd = list(cmd)
+    if cmd and Path(str(cmd[0])).stem.lower() == "ffmpeg" and "-nostdin" not in cmd:
+        cmd.insert(1, "-nostdin")
     logging.debug("Executando: %s", subprocess.list2cmdline(list(cmd)))
     try:
         return subprocess.run(
@@ -219,6 +234,7 @@ def run_command(cmd: Sequence[str], *, capture: bool = False) -> subprocess.Comp
             stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            startupinfo=_hidden_startupinfo(),
         )
     except FileNotFoundError as exc:
         raise EnsaioError(f"Programa não encontrado: {cmd[0]}") from exc
@@ -699,7 +715,7 @@ def write_review_csv(path: Path, segments: Sequence[Segment]) -> None:
         "inicio_corte_original", "fim_corte_original", "ajuste_inicio", "ajuste_fim",
         "inicio_corte", "fim_corte", "duracao", "inicio_bruto", "fim_bruto",
         "classificacao", "observacao", "titulo_sugerido", "score_identificacao",
-        "segunda_opcao", "score_segunda_opcao", "identificacao_aplicada",
+        "segunda_opcao", "score_segunda_opcao", "terceira_opcao", "score_terceira_opcao", "identificacao_aplicada",
     ]
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=";")
@@ -711,6 +727,7 @@ def write_review_csv(path: Path, segments: Sequence[Segment]) -> None:
             row["identificacao_aplicada"] = "SIM" if segment.identificacao_aplicada else "NAO"
             row["score_identificacao"] = f"{float(segment.score_identificacao):.4f}".replace(".", ",")
             row["score_segunda_opcao"] = f"{float(segment.score_segunda_opcao):.4f}".replace(".", ",")
+            row["score_terceira_opcao"] = f"{float(segment.score_terceira_opcao):.4f}".replace(".", ",")
             if row.get("inicio_corte_original") is None:
                 row["inicio_corte_original"] = segment.inicio_corte
             if row.get("fim_corte_original") is None:
@@ -725,71 +742,77 @@ def write_review_csv(path: Path, segments: Sequence[Segment]) -> None:
 
 
 def create_previews(cfg: Config, master: Path, segments: Sequence[Segment]) -> None:
+    """Regenera prévias sem sobrescrever arquivos de áudio em uso pelo navegador.
+
+    Cria todos os MP3 com identificador único, publica o índice em operação
+    atômica e tenta remover gerações antigas sem bloquear a edição no Windows.
+    """
     preview_dir = cfg.pasta_revisao / "previews"
     start_preview_dir = cfg.pasta_revisao / "previews_inicio"
     web_preview_dir = cfg.pasta_revisao / "previews_web"
-    for directory in (preview_dir, start_preview_dir, web_preview_dir):
-        if directory.exists():
-            shutil.rmtree(directory)
-        directory.mkdir(parents=True, exist_ok=True)
-
+    for folder in (preview_dir, start_preview_dir, web_preview_dir):
+        folder.mkdir(parents=True, exist_ok=True)
+    generation = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     master_duration = media_duration(cfg, master)
     preview_index: list[dict[str, float | int | str]] = []
-    for segment in segments:
-        output = preview_dir / f"{segment.ordem:03d}_{segment.classificacao}.mp3"
-        run_command(
-            [
-                cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-ss", format_seconds(segment.inicio_corte),
-                "-to", format_seconds(segment.fim_corte),
-                "-i", str(master),
-                "-vn", "-c:a", "libmp3lame", "-b:a", cfg.preview_bitrate,
-                str(output),
-            ]
-        )
+    generated: list[Path] = []
+    index_path = cfg.pasta_revisao / "previews_web.json"
+    temp_index = cfg.pasta_revisao / f"previews_web_{generation}.tmp"
+    try:
+        for segment in segments:
+            start = segment.inicio_corte
+            end = segment.fim_corte
+            if start < 0 or end <= start or end > master_duration + .25:
+                raise EnsaioError(f"Cortes inválidos na faixa {segment.ordem}.")
+            simple = preview_dir / f"{segment.ordem:03d}_{segment.classificacao}_{generation}.mp3"
+            detected_start = segment.inicio_bruto
+            quick_start = max(0.0, detected_start - cfg.start_preview_before_seconds)
+            quick_end = min(master_duration, detected_start + cfg.start_preview_after_seconds)
+            if quick_end <= quick_start:
+                quick_start, quick_end = start, end
+            quick = start_preview_dir / f"{segment.ordem:03d}_inicio_{generation}.mp3"
+            web_start = max(0.0, start - cfg.ui_preview_margin_seconds)
+            web_end = min(master_duration, end + cfg.ui_preview_margin_seconds)
+            web = web_preview_dir / f"{segment.ordem:03d}_{generation}.mp3"
+            for path, cut_start, cut_end in (
+                (simple, start, end), (quick, quick_start, quick_end),
+                (web, web_start, web_end),
+            ):
+                generated.append(path)
+                run_command([
+                    cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", format_seconds(cut_start), "-to", format_seconds(cut_end),
+                    "-i", str(master), "-vn", "-c:a", "libmp3lame", "-b:a",
+                    cfg.preview_bitrate, str(path),
+                ])
+                if not path.is_file() or path.stat().st_size == 0:
+                    raise EnsaioError(f"Não foi possível criar a prévia {path.name}")
+            preview_index.append({
+                "ordem": segment.ordem,
+                "arquivo": web.name,
+                "inicio_preview_master": web_start,
+                "fim_preview_master": web_end,
+                "offset_inicio_corte": start - web_start,
+                "offset_fim_corte": end - web_start,
+            })
+        temp_index.write_text(json.dumps(preview_index, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_index.replace(index_path)
+    except Exception:
+        for file in generated:
+            try: file.unlink(missing_ok=True)
+            except OSError: pass
+        try: temp_index.unlink(missing_ok=True)
+        except OSError: pass
+        raise
+    # Nunca tentar remover MP3 que o navegador pode ter aberto como requisito
+    # para concluir a divisão. Arquivos antigos são apenas limpeza opcional.
+    current = {str(path) for path in generated}
+    for folder in (preview_dir, start_preview_dir, web_preview_dir):
+        for old in folder.glob("*.mp3"):
+            if str(old) not in current:
+                try: old.unlink()
+                except OSError: logging.info("Prévia antiga ainda em uso: %s", old)
 
-        detected_start = segment.inicio_bruto
-        preview_start = max(0.0, detected_start - cfg.start_preview_before_seconds)
-        preview_end = min(master_duration, detected_start + cfg.start_preview_after_seconds)
-        start_output = start_preview_dir / f"{segment.ordem:03d}_inicio.mp3"
-        run_command(
-            [
-                cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-ss", format_seconds(preview_start),
-                "-to", format_seconds(preview_end),
-                "-i", str(master),
-                "-vn", "-c:a", "libmp3lame", "-b:a", cfg.preview_bitrate,
-                str(start_output),
-            ]
-        )
-
-        # Prévia ampliada usada pela interface web. Ela inclui margem antes e depois
-        # para permitir conferir ajustes positivos ou negativos nos cortes.
-        web_start = max(0.0, segment.inicio_corte - cfg.ui_preview_margin_seconds)
-        web_end = min(master_duration, segment.fim_corte + cfg.ui_preview_margin_seconds)
-        web_output = web_preview_dir / f"{segment.ordem:03d}.mp3"
-        run_command(
-            [
-                cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-ss", format_seconds(web_start),
-                "-to", format_seconds(web_end),
-                "-i", str(master),
-                "-vn", "-c:a", "libmp3lame", "-b:a", cfg.preview_bitrate,
-                str(web_output),
-            ]
-        )
-        preview_index.append({
-            "ordem": segment.ordem,
-            "arquivo": web_output.name,
-            "inicio_preview_master": web_start,
-            "fim_preview_master": web_end,
-            "offset_inicio_corte": segment.inicio_corte - web_start,
-            "offset_fim_corte": segment.fim_corte - web_start,
-        })
-
-    (cfg.pasta_revisao / "previews_web.json").write_text(
-        json.dumps(preview_index, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
 
 def save_manifest(
     cfg: Config,
@@ -1011,6 +1034,8 @@ def row_to_segment(row: dict[str, str], row_number: int) -> Segment:
         score_identificacao=optional_decimal(row.get("score_identificacao"), 0.0, "score_identificacao", row_number),
         segunda_opcao=(row.get("segunda_opcao") or "").strip(),
         score_segunda_opcao=optional_decimal(row.get("score_segunda_opcao"), 0.0, "score_segunda_opcao", row_number),
+        terceira_opcao=(row.get("terceira_opcao") or "").strip(),
+        score_terceira_opcao=optional_decimal(row.get("score_terceira_opcao"), 0.0, "score_terceira_opcao", row_number),
         identificacao_aplicada=optional_yes_no(row.get("identificacao_aplicada"), False),
     )
 
@@ -1035,8 +1060,6 @@ def read_review_csv(path: Path) -> list[Segment]:
     for segment in selected:
         if not segment.titulo:
             raise EnsaioError(f"A faixa {segment.ordem} está sem título.")
-        if not segment.qualidade:
-            raise EnsaioError(f"A faixa {segment.ordem} está sem avaliação de qualidade.")
     return selected
 
 def validate_selected_segments(segments: Sequence[Segment], master_duration: float) -> None:
@@ -1140,47 +1163,36 @@ def duration_label(seconds: float) -> str:
 def chapter_label(segment: Segment, index: int) -> str:
     title = segment.titulo or f"[IDENTIFICAR {index:02d}]"
     quality = segment.qualidade.strip()
-    suffix = f", {quality}" if quality else ""
+    note = (segment.observacao or "").strip()
+    details = [part for part in (quality, note) if part]
+    suffix = " — " + " · ".join(details) if details else ""
     return f"{title}{suffix} ({duration_label(segment.duracao)})"
 
 
 def write_chapters(path: Path, selected: Sequence[Segment]) -> None:
+    """Mantida por compatibilidade; a finalização usa somente a descrição."""
     current = 0.0
-    lines: list[str] = []
+    lines = []
     for index, segment in enumerate(selected, start=1):
         lines.append(f"{chapter_timestamp(current)} {chapter_label(segment, index)}")
         current += segment.duracao
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-def write_video_description(path: Path, selected: Sequence[Segment]) -> None:
-    """Gera texto pronto para colar na descrição do YouTube.
 
-    Mantém os timestamps em um bloco contínuo para preservar os capítulos e coloca
-    as observações em uma seção separada, sem novos timestamps, para não confundir
-    o parser de capítulos do YouTube.
-    """
+def write_video_description(path: Path, selected: Sequence[Segment]) -> None:
+    """Capítulos prontos para YouTube, com comentários na linha da música."""
     current = 0.0
-    chapter_lines: list[str] = []
-    notes: list[str] = []
+    lines = []
     for index, segment in enumerate(selected, start=1):
-        chapter_lines.append(f"{chapter_timestamp(current)} {chapter_label(segment, index)}")
-        observation = (segment.observacao or "").strip()
-        if observation:
-            title = segment.titulo or f"Faixa {index:02d}"
-            notes.append(f"{title} — {observation}")
+        lines.append(f"{chapter_timestamp(current)} {chapter_label(segment, index)}")
         current += segment.duracao
-    lines = list(chapter_lines)
-    if notes:
-        lines.extend(["", "Observações:"])
-        lines.extend(notes)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def verify_final_files(cfg: Config, video: Path, audio: Path, chapters: Path) -> None:
-    for path in (video, audio, chapters):
+def verify_final_files(cfg: Config, video: Path, audio: Path, description: Path) -> None:
+    for path in (video, audio, description):
         if not path.exists() or path.stat().st_size == 0:
             raise EnsaioError(f"Arquivo final ausente ou vazio: {path}")
-
     audio_duration = media_duration(cfg, audio)
     video_duration = media_duration(cfg, video)
     difference = abs(audio_duration - video_duration)
@@ -1498,6 +1510,8 @@ def identify_segments_from_references(
         segment.score_identificacao = 0.0
         segment.segunda_opcao = ""
         segment.score_segunda_opcao = 0.0
+        segment.terceira_opcao = ""
+        segment.score_terceira_opcao = 0.0
         segment.identificacao_aplicada = False
         duration = max(0.0, segment.fim_bruto - segment.inicio_bruto)
         if duration < cfg.recognition_min_seconds:
@@ -1529,10 +1543,13 @@ def identify_segments_from_references(
             continue
         best_title, best_score = ranking[0]
         second_title, second_score = ranking[1] if len(ranking) > 1 else ("", 0.0)
+        third_title, third_score = ranking[2] if len(ranking) > 2 else ("", 0.0)
         segment.titulo_sugerido = best_title
         segment.score_identificacao = float(best_score)
         segment.segunda_opcao = second_title
         segment.score_segunda_opcao = float(second_score)
+        segment.terceira_opcao = third_title
+        segment.score_terceira_opcao = float(third_score)
         identified += 1
         margin = best_score - second_score
         if apply_titles and not segment.titulo and best_score >= score_threshold and margin >= margin_threshold:
@@ -1739,20 +1756,18 @@ def command_finalize(cfg: Config, *, verbose: bool, no_move: bool) -> None:
     work_dir = work_dir_for_date(cfg, date_code)
     parts = extract_selected_segments(cfg, master, selected, work_dir)
     base = output_basename(date_code)
-    final_audio = cfg.pasta_output / f"{base}.wav"
     final_video = cfg.pasta_output / f"{base}.mp4"
-    chapters = cfg.pasta_output / f"{base}.capitulos.txt"
     description = cfg.pasta_output / f"{base}.descricao.txt"
-    report = cfg.pasta_output / f"{base}.segmentos.csv"
+    # O relatório técnico continua disponível para incorporação manual futura.
+    report = cfg.pasta_dados / "relatorios" / f"{base}.segmentos.csv"
 
     temp_audio = work_dir / "audio_final.wav"
     concatenate_wavs(cfg, parts, temp_audio)
-    shutil.copy2(temp_audio, final_audio)
-    create_static_video(cfg, final_audio, final_video)
-    write_chapters(chapters, selected)
+    create_static_video(cfg, temp_audio, final_video)
     write_video_description(description, selected)
+    verify_final_files(cfg, final_video, temp_audio, description)
+    report.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(cfg.pasta_revisao / "segmentos.csv", report)
-    verify_final_files(cfg, final_video, final_audio, chapters)
     references_imported, reference_duplicates = incorporate_selected_references(
         cfg, date_code, master, selected
     )
@@ -1768,10 +1783,8 @@ def command_finalize(cfg: Config, *, verbose: bool, no_move: bool) -> None:
     logging.info("Finalização concluída com êxito.")
     print("\nARQUIVOS GERADOS")
     print(final_video)
-    print(final_audio)
-    print(chapters)
     print(description)
-    print(report)
+    logging.info("Relatório técnico preservado em %s", report)
     print(f"Referências incorporadas: {references_imported}; duplicadas ignoradas: {reference_duplicates}")
     if archived_to:
         print(f"Brutos movidos para: {archived_to}")
@@ -1827,10 +1840,11 @@ def report_date_code(path: Path) -> str | None:
 
 def find_output_report(cfg: Config, date_code: str | None) -> tuple[Path, str]:
     reports: list[tuple[str, Path]] = []
-    for path in cfg.pasta_output.glob("Ensaio.*.segmentos.csv"):
-        code = report_date_code(path)
-        if code:
-            reports.append((code, path))
+    for folder in (cfg.pasta_dados / "relatorios", cfg.pasta_output):
+        for path in folder.glob("Ensaio.*.segmentos.csv"):
+            code = report_date_code(path)
+            if code and not any(item[0] == code for item in reports):
+                reports.append((code, path))
     if date_code:
         for code, path in reports:
             if code == date_code:
