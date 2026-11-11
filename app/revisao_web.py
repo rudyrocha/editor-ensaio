@@ -486,6 +486,15 @@ class AppState:
                 }
             except Exception:
                 current = None
+        pending_temporary = None
+        if raw_files:
+            try:
+                _, date_code = ensaio.discover_raw_files(self.cfg)
+                pending_dir = ensaio.work_dir_for_date(self.cfg, date_code)
+                if pending_dir.is_dir() and any(pending_dir.iterdir()):
+                    pending_temporary = str(pending_dir)
+            except (ensaio.EnsaioError, OSError, ValueError):
+                pass
         references = ensaio.read_reference_index(self.cfg.pasta_referencias / "referencias.csv")
         active_refs = [row for row in references if (row.get("ativa") or "SIM").strip().upper() in {"SIM", "S", "1", "TRUE"}]
         return {
@@ -494,6 +503,7 @@ class AppState:
             "quantidade_brutos": len(raw_files),
             "revisao_disponivel": self.review_exists(),
             "revisao_atual": current,
+            "temporarios_pendentes": pending_temporary,
             "referencias_ativas": len(active_refs),
             "musicas": len(self.read_songs()),
             "processo": self.process_kind,
@@ -516,6 +526,8 @@ class AppState:
                 cwd=str(self.script_dir),
                 stdout=self.log_handle,
                 stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -524,7 +536,7 @@ class AppState:
             self.started_at = time.time()
             self.last_return_code = None
 
-    def start_analysis(self) -> dict:
+    def start_analysis(self, payload: dict | None = None) -> dict:
         raw_files = [p for p in self.cfg.pasta_brutas.glob("*") if p.is_file() and p.suffix.lower() in ensaio.AUDIO_EXTENSIONS]
         if not raw_files:
             raise ReviewError(f"Nenhum WAV encontrado em {self.cfg.pasta_brutas}.")
@@ -532,6 +544,8 @@ class AppState:
             sys.executable, str(self.script_dir / "ensaio.py"), "analisar",
             "--config", str(self.config_path),
         ]
+        if payload and payload.get("recomecar") is True:
+            command.append("--recomecar")
         self.pending_learning_payload = None
         self.learning_logged = False
         self._start_subprocess(command, "analise", "analise_web.log")
@@ -972,7 +986,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = self.read_json()
             if parsed.path == "/api/analisar":
-                self.send_json(self.state.start_analysis())
+                self.send_json(self.state.start_analysis(payload))
                 return
             if parsed.path == "/api/identificar":
                 self.send_json(self.state.reidentify(payload))
