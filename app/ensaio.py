@@ -725,71 +725,110 @@ def write_review_csv(path: Path, segments: Sequence[Segment]) -> None:
 
 
 def create_previews(cfg: Config, master: Path, segments: Sequence[Segment]) -> None:
+    """Gera prévias com nomes novos, sem sobrescrever MP3 usados pelo navegador.
+
+    Em Windows, um elemento <audio> pode manter seu arquivo aberto. Portanto,
+    a revisão só passa a apontar para a nova geração depois que todos os
+    arquivos forem criados. Arquivos antigos são removidos oportunisticamente.
+    """
     preview_dir = cfg.pasta_revisao / "previews"
     start_preview_dir = cfg.pasta_revisao / "previews_inicio"
     web_preview_dir = cfg.pasta_revisao / "previews_web"
-    for directory in (preview_dir, start_preview_dir, web_preview_dir):
-        if directory.exists():
-            shutil.rmtree(directory)
+    directories = (preview_dir, start_preview_dir, web_preview_dir)
+    for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
 
+    generation = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     master_duration = media_duration(cfg, master)
     preview_index: list[dict[str, float | int | str]] = []
-    for segment in segments:
-        output = preview_dir / f"{segment.ordem:03d}_{segment.classificacao}.mp3"
-        run_command(
-            [
-                cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-ss", format_seconds(segment.inicio_corte),
-                "-to", format_seconds(segment.fim_corte),
-                "-i", str(master),
-                "-vn", "-c:a", "libmp3lame", "-b:a", cfg.preview_bitrate,
-                str(output),
-            ]
-        )
+    new_files: list[Path] = []
+    index_path = cfg.pasta_revisao / "previews_web.json"
+    temporary_index = cfg.pasta_revisao / f"previews_web_{generation}.json.tmp"
 
-        detected_start = segment.inicio_bruto
-        preview_start = max(0.0, detected_start - cfg.start_preview_before_seconds)
-        preview_end = min(master_duration, detected_start + cfg.start_preview_after_seconds)
-        start_output = start_preview_dir / f"{segment.ordem:03d}_inicio.mp3"
-        run_command(
-            [
-                cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-ss", format_seconds(preview_start),
-                "-to", format_seconds(preview_end),
-                "-i", str(master),
-                "-vn", "-c:a", "libmp3lame", "-b:a", cfg.preview_bitrate,
-                str(start_output),
-            ]
-        )
+    try:
+        for segment in segments:
+            output = preview_dir / f"{segment.ordem:03d}_{segment.classificacao}_{generation}.mp3"
+            new_files.append(output)
+            run_command(
+                [
+                    cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", format_seconds(segment.inicio_corte),
+                    "-to", format_seconds(segment.fim_corte),
+                    "-i", str(master),
+                    "-vn", "-c:a", "libmp3lame", "-b:a", cfg.preview_bitrate,
+                    str(output),
+                ]
+            )
 
-        # Prévia ampliada usada pela interface web. Ela inclui margem antes e depois
-        # para permitir conferir ajustes positivos ou negativos nos cortes.
-        web_start = max(0.0, segment.inicio_corte - cfg.ui_preview_margin_seconds)
-        web_end = min(master_duration, segment.fim_corte + cfg.ui_preview_margin_seconds)
-        web_output = web_preview_dir / f"{segment.ordem:03d}.mp3"
-        run_command(
-            [
-                cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-ss", format_seconds(web_start),
-                "-to", format_seconds(web_end),
-                "-i", str(master),
-                "-vn", "-c:a", "libmp3lame", "-b:a", cfg.preview_bitrate,
-                str(web_output),
-            ]
-        )
-        preview_index.append({
-            "ordem": segment.ordem,
-            "arquivo": web_output.name,
-            "inicio_preview_master": web_start,
-            "fim_preview_master": web_end,
-            "offset_inicio_corte": segment.inicio_corte - web_start,
-            "offset_fim_corte": segment.fim_corte - web_start,
-        })
+            detected_start = segment.inicio_bruto
+            preview_start = max(0.0, detected_start - cfg.start_preview_before_seconds)
+            preview_end = min(master_duration, detected_start + cfg.start_preview_after_seconds)
+            start_output = start_preview_dir / f"{segment.ordem:03d}_inicio_{generation}.mp3"
+            new_files.append(start_output)
+            run_command(
+                [
+                    cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", format_seconds(preview_start),
+                    "-to", format_seconds(preview_end),
+                    "-i", str(master),
+                    "-vn", "-c:a", "libmp3lame", "-b:a", cfg.preview_bitrate,
+                    str(start_output),
+                ]
+            )
 
-    (cfg.pasta_revisao / "previews_web.json").write_text(
-        json.dumps(preview_index, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+            web_start = max(0.0, segment.inicio_corte - cfg.ui_preview_margin_seconds)
+            web_end = min(master_duration, segment.fim_corte + cfg.ui_preview_margin_seconds)
+            web_output = web_preview_dir / f"{segment.ordem:03d}_{generation}.mp3"
+            new_files.append(web_output)
+            run_command(
+                [
+                    cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", format_seconds(web_start),
+                    "-to", format_seconds(web_end),
+                    "-i", str(master),
+                    "-vn", "-c:a", "libmp3lame", "-b:a", cfg.preview_bitrate,
+                    str(web_output),
+                ]
+            )
+            preview_index.append({
+                "ordem": segment.ordem,
+                "arquivo": web_output.name,
+                "inicio_preview_master": web_start,
+                "fim_preview_master": web_end,
+                "offset_inicio_corte": segment.inicio_corte - web_start,
+                "offset_fim_corte": segment.fim_corte - web_start,
+            })
+
+        temporary_index.write_text(
+            json.dumps(preview_index, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        temporary_index.replace(index_path)
+    except Exception:
+        # Falha na geração não deve invalidar prévias ainda em uso.
+        for file in new_files:
+            try:
+                file.unlink(missing_ok=True)
+            except OSError:
+                pass
+        try:
+            temporary_index.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+    # Remover arquivos de gerações anteriores somente se o sistema permitir.
+    # Arquivos abertos no Windows permanecem até a próxima regeneração.
+    active_web = {str(web_preview_dir / row["arquivo"]) for row in preview_index}
+    current_names = {str(path) for path in new_files}
+    for directory in directories:
+        for old_file in directory.glob("*.mp3"):
+            if str(old_file) in current_names or str(old_file) in active_web:
+                continue
+            try:
+                old_file.unlink()
+            except OSError:
+                logging.info("Prévia anterior ainda em uso, limpeza adiada: %s", old_file)
+
 
 def save_manifest(
     cfg: Config,
