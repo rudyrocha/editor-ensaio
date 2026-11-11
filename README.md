@@ -1,46 +1,24 @@
-# Editor de Ensaios — Diógenes
+# Editor de Ensaios — versão 3.3.0
 
-**Versão do aplicativo: 3.2.1.** Projeto local Windows, com interface web para revisar gravações de ensaio, identificar músicas por referências, editar segmentos e gerar vídeo MP4.
+Editor local de áudio de ensaios com reconhecimento de músicas, segmentação/revisão humana, referências e publicação manual no YouTube.
 
-## Correções da 3.2.1
+**Documentação técnica:** [`docs/`](docs/). **Mudanças e instruções da v3.3.0:** [`docs/13_EDITOR_V3_3_0.md`](docs/13_EDITOR_V3_3_0.md).
 
-- FFmpeg e FFprobe não abrem janelas de console no Windows nem recebem comandos pelo teclado.
-- Uma análise interrompida pode ser reiniciada com confirmação, preservando os intermediários antigos em `temporarios_interrompidos_*` e o histórico de revisão.
-- Atualizador incremental: execute `atualizar_editor_v3_2_1.bat` no ZIP completo, sem remover a instalação atual.
+## Atualização do aplicativo existente
 
-Veja [detalhes das correções](docs/11_FFMPEG_E_RECUPERACAO_V3_2_1.md).
+1. **Code → Download ZIP**; extraia em pasta temporária fora de `_sistema`.
+2. Feche completamente o editor (inclusive o servidor local) e suas abas.
+3. Execute `atualizar_editor_v3_3_0.bat` a partir da raiz extraída.
+4. Abra o Editor pelo atalho e verifique a versão **3.3.0**. Use `Ctrl+F5` no navegador.
+5. Faça um ensaio de homologação antes de excluir os backups de código.
 
-## Atualização 3.2.0 (base)
+O atualizador preserva o ambiente virtual, os WAV originais, banco de referências, revisões, dados e intermediários existentes. As melhorias não dependem de repetir análise ou reconhecimento já feitos.
 
-A versão 3.2.1 mantém as funções musicais da v3.1.3 e reorganiza os derivados de processamento em `processadas/AAAA-MM-DD/temporarios/`. Depois de uma finalização validada, remove somente essa pasta de intermediários. Mantém os WAVs originais em `processadas/AAAA-MM-DD/` (se a opção **Mover brutos** estiver ativa), os arquivos finais em `output/` e as referências em `referencias/`.
+## Estrutura
 
-O editor **não envia vídeos ao YouTube nem verifica a publicação**; remova originais/finais manualmente depois de confirmar a publicação.
+- `app/`: código e scripts de execução local.
+- `tests/`: testes automatizados (`python -m unittest discover -s tests -v`).
+- `docs/`: arquitetura, regras, compatibilidade e evolução das versões.
+- `processadas/` e `referencias/`: **não versionadas** no Git.
 
-Veja [as regras, garantias e limitações](docs/10_CICLO_ARQUIVOS_V3_2_0.md).
-
-## Histórico — instalação inicial da v3.2.0 sobre a v3.1.3
-
-1. Feche o Editor.
-2. No GitHub, clique em **Code > Download ZIP** e extraia em uma pasta temporária fora de `D:\OFFline\Videos\@ensaio`.
-3. Execute `atualizar_editor_v3_2_0.bat` na raiz extraída.
-4. Confirme a criação do backup; os dados e `.venv` da instalação existente não são apagados.
-5. Abra o atalho habitual do Editor. Faça uma análise de um novo ensaio, revise e gere um vídeo; confira o MP4 e a pasta temporária.
-
-**Não execute um migrador de versões antigas.** O atualizador é destinado a instalações da v3.1.3 na estrutura nova.
-
-## Estrutura do repositório
-
-- `app/`: código executável, interface web, scripts Windows e configuração.
-- `tests/`: testes automatizados não destrutivos (somente pastas temporárias).
-- `docs/`: arquitetura, contratos, manutenções, testes e histórico de mudanças.
-- `.github/workflows/`: validação de testes no GitHub Actions.
-
-Arquivos de áudio e vídeo, referências, dados pessoais do ensaio, `.venv` e revisões locais **não são versionados**.
-
-## Testes
-
-```shell
-python -m unittest discover -s tests -v
-```
-
-A execução dos testes não usa arquivos de áudio reais. A geração de vídeo com FFmpeg precisa ser homologada na máquina Windows.
+Saída de um ensaio novo: **MP4 e TXT de descrição**. Relatório técnico de segmentos permanece em `_sistema/dados/relatorios` para integração e referência.
