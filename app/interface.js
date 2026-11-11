@@ -22,6 +22,25 @@ const reviewWorkspace = document.getElementById("reviewWorkspace");
 const actionsFooter = document.getElementById("actionsFooter");
 const closeTopButton = document.getElementById("closeTopButton");
 
+function showTrackError(order, message) {
+  const card = document.querySelector(`.track-card[data-order="${Number(order)}"]`);
+  if (!card) return false;
+  document.querySelectorAll(".track-alert").forEach(node => node.remove());
+  const alert = document.createElement("div");
+  alert.className = "track-alert";
+  alert.setAttribute("role", "alert");
+  alert.textContent = message;
+  card.prepend(alert);
+  errorBox.classList.add("hidden");
+  successBox.classList.add("hidden");
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  return true;
+}
+function displayError(error) {
+  const message = String(error?.message || error);
+  const order = error?.faixa || Number(message.match(/faixas?\s+(\d+)/i)?.[1]);
+  if (!order || !showTrackError(order, message)) showError(message);
+}
 function showError(message) {
   errorBox.textContent = message;
   errorBox.classList.remove("hidden");
@@ -36,6 +55,7 @@ function showSuccess(message) {
 function clearMessages() {
   errorBox.classList.add("hidden");
   successBox.classList.add("hidden");
+  document.querySelectorAll(".track-alert").forEach(node => node.remove());
 }
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
@@ -229,22 +249,38 @@ function songOptions(current) {
   return options.join("");
 }
 function qualityOptions(item) {
-  return state.data.qualidades.map((quality, index) => `
-    <label title="Nível ${index + 1}">
+  return ["", ...state.data.qualidades].map((quality, index) => `
+    <label title="${quality ? `Nível ${index}` : "Sem avaliação"}">
       <input type="radio" name="quality-${item.ordem}" value="${escapeHtml(quality)}" ${item.qualidade === quality ? "checked" : ""}>
-      <span>${escapeHtml(quality)}</span>
+      <span>${escapeHtml(quality || "Não avaliar")}</span>
     </label>`).join("");
 }
 function recognitionMarkup(item) {
-  const suggested = String(item.titulo_sugerido || "").trim();
-  if (!suggested) return "";
-  const score = Math.round(Number(item.score_identificacao || 0) * 100);
-  const second = String(item.segunda_opcao || "").trim();
-  const secondScore = Math.round(Number(item.score_segunda_opcao || 0) * 100);
-  const applied = Boolean(item.identificacao_aplicada);
-  const detail = second ? ` · alternativa: ${escapeHtml(second)} ${secondScore}%` : "";
-  const status = applied ? "preenchido automaticamente" : "sugestão para confirmação";
-  return `<div class="recognition-note"><b>Reconhecimento:</b> ${escapeHtml(suggested)} · similaridade ${score}%${detail}<br><span>${status}. Se o título final for alterado, a correção será registrada para aprendizado.</span></div>`;
+  const alternatives = [
+    [item.titulo_sugerido, item.score_identificacao],
+    [item.segunda_opcao, item.score_segunda_opcao],
+    [item.terceira_opcao, item.score_terceira_opcao],
+  ].filter(([title]) => String(title || "").trim());
+  if (!alternatives.length) return "";
+  const unique = [];
+  const names = new Set();
+  for (const [title, score] of alternatives) {
+    const name = String(title).trim();
+    if (!names.has(name.toLowerCase())) {
+      unique.push([name, Math.round(Number(score || 0) * 100)]);
+      names.add(name.toLowerCase());
+    }
+  }
+  const choices = unique.map(([title, score]) => `
+    <label class="recognition-choice">
+      <input type="radio" name="suggestion-${item.ordem}" value="${escapeHtml(title)}"
+        ${item.titulo === title ? "checked" : ""}>
+      <span>${escapeHtml(title)} <small>${score}% similaridade</small></span>
+    </label>`).join("");
+  return `<fieldset class="recognition-note"><legend>Identificação sugerida — selecione uma opção</legend>
+    <div class="recognition-choices">${choices}</div>
+    <small>Ou escolha outra música no menu acima. A sugestão não é uma confirmação automática.</small>
+  </fieldset>`;
 }
 
 function renderTrack(item) {
@@ -291,7 +327,7 @@ function renderTrack(item) {
           ${recognitionMarkup(item)}
         </div>
         <div class="quality">
-          <div class="quality-label">Qualidade da execução</div>
+          <div class="quality-label">Qualidade da execução (opcional)</div>
           <div class="quality-options">${qualityOptions(item)}</div>
         </div>
         <div class="reference-box">
@@ -409,13 +445,26 @@ function renderData(data, focusOrder = null, preserveMoveRaw = true) {
 async function applyStructure(path, payload, successMessage, focusOrder) {
   clearMessages();
   setInterfaceBusy(true);
+  document.querySelectorAll("audio.audio-engine").forEach(audio => {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  });
   showSuccess("Salvando alterações e regenerando as prévias de áudio…");
   try {
     const result = await api(path, payload);
     renderData(result.dados, result.foco_ordem ?? focusOrder, true);
     showSuccess(result.mensagem || successMessage);
   } catch (error) {
-    showError(error.message);
+    document.querySelectorAll(".track-card").forEach(card => {
+      const original = state.items.find(x => x.ordem === Number(card.dataset.order));
+      if (original?.audio_url) {
+        const audio = card.querySelector("audio.audio-engine");
+        audio.src = original.audio_url;
+        audio.load();
+      }
+    });
+    displayError(error);
   } finally {
     setInterfaceBusy(false);
   }
@@ -458,7 +507,26 @@ function bindCard(card) {
   const select = card.querySelector(".song-select");
   const customRow = card.querySelector(".custom-row");
   bindPlayer(card);
+  card.querySelectorAll('input[name^="suggestion-"]').forEach(radio => {
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      const title = radio.value;
+      const option = [...select.options].find(o => o.value === title);
+      if (option) {
+        select.value = title;
+        customRow.classList.add("hidden");
+      } else {
+        select.value = "__OUTRA__";
+        card.querySelector(".custom-title").value = title;
+        customRow.classList.remove("hidden");
+      }
+      updateCard(card);
+    });
+  });
   select.addEventListener("change", () => {
+    card.querySelectorAll('input[name^="suggestion-"]').forEach(radio => {
+      radio.checked = radio.value === select.value;
+    });
     customRow.classList.toggle("hidden", select.value !== "__OUTRA__");
     if (select.value === "__OUTRA__") card.querySelector(".custom-title").focus();
     updateCard(card);
@@ -485,10 +553,15 @@ function collectPayload(requireComplete = true) {
   const segments = [...document.querySelectorAll(".track-card")].map(getCardData);
   for (const item of segments) {
     if (item.duration < 1 || item.effective_start < 0 || item.effective_end > state.data.duracao_master + .25) {
-      throw new Error(`Corte inválido na faixa ${item.ordem}.`);
+      const error = new Error(`Corte inválido na faixa ${item.ordem}.`);
+      error.faixa = item.ordem;
+      throw error;
     }
-    if (requireComplete && item.incluir && !item.titulo) throw new Error(`Informe o nome da faixa ${item.ordem}.`);
-    if (requireComplete && item.incluir && !item.qualidade) throw new Error(`Avalie a qualidade da faixa ${item.ordem}.`);
+    if (requireComplete && item.incluir && !item.titulo) {
+      const error = new Error(`Informe o nome da faixa ${item.ordem}.`);
+      error.faixa = item.ordem;
+      throw error;
+    }
   }
   const selected = segments.filter(item => item.incluir).sort((a,b) => a.ordem-b.ordem);
   if (!selected.length) throw new Error("Mantenha pelo menos uma faixa no ensaio.");
@@ -518,7 +591,7 @@ async function save() {
     state.data.musicas = result.musicas || state.data.musicas;
     showSuccess(result.mensagem || "Alterações salvas.");
   } catch (error) {
-    showError(error.message);
+    displayError(error);
   } finally {
     saveButton.disabled = finalizeButton.disabled = false;
   }
@@ -540,7 +613,7 @@ async function finalize() {
     progressPanel.scrollIntoView({behavior: "smooth", block: "start"});
     pollStatus();
   } catch (error) {
-    showError(error.message);
+    displayError(error);
     saveButton.disabled = finalizeButton.disabled = false;
   }
 }
@@ -565,14 +638,7 @@ async function refreshOverview() {
 
 async function startAnalysis() {
   clearMessages();
-  // Não confiar no estado carregado ao abrir a página: um erro anterior pode
-  // ter deixado novos intermediários no disco.
-  try {
-    await refreshOverview();
-  } catch (error) {
-    showError("Não foi possível verificar a situação dos arquivos antes da análise: " + error.message);
-    return;
-  }
+  try { await refreshOverview(); } catch (error) { displayError(error); return; }
   if (state.overview?.revisao_disponivel) {
     if (!window.confirm("Iniciar uma nova análise? A revisão atual será preservada no histórico e substituída pela nova análise.")) return;
   }
@@ -592,7 +658,7 @@ async function startAnalysis() {
     progressPanel.scrollIntoView({behavior: "smooth", block: "start"});
     pollStatus();
   } catch (error) {
-    showError(error.message);
+    displayError(error);
     setInterfaceBusy(false);
   }
 }
@@ -608,7 +674,7 @@ async function reidentify() {
     renderData(result.dados, null, true);
     showSuccess(result.mensagem || "Identificação concluída.");
   } catch (error) {
-    showError(error.message);
+    displayError(error);
   } finally {
     identifyButton.textContent = "Identificar músicas novamente";
     setInterfaceBusy(false);
@@ -630,7 +696,7 @@ async function pollStatus() {
     if (status.estado === "concluido") {
       if (type === "analise") {
         progressTitle.textContent = "Análise concluída";
-        progressText.textContent = "A revisão foi preparada. Confira os nomes sugeridos, cortes e avaliações.";
+        progressText.textContent = "A revisão foi preparada. Confira os nomes sugeridos e os cortes.";
         const data = await api("/api/dados");
         moveRaw.checked = data.mover_brutos_padrao;
         renderData(data, null, false);
@@ -639,19 +705,17 @@ async function pollStatus() {
         reviewWorkspace.scrollIntoView({behavior: "smooth", block: "start"});
       } else {
         progressTitle.textContent = "Processo concluído";
-        progressText.textContent = "Vídeo, áudio, capítulos, descrição e referências foram gerados com sucesso.";
+        progressText.textContent = "MP4 e descrição gerados; referências e relatório técnico preservados.";
         showSuccess("Finalização concluída com sucesso.");
         await refreshOverview();
       }
     } else if (status.estado === "erro") {
       progressTitle.textContent = type === "analise" ? "A análise encontrou um erro" : "A finalização encontrou um erro";
       progressText.textContent = "Consulte o log abaixo.";
-      // Atualiza a informação de arquivos remanescentes mesmo quando falhar.
-      try { await refreshOverview(); } catch (_) {}
       showError(`${type === "analise" ? "A análise" : "A finalização"} terminou com erro ${status.codigo}.`);
     }
   } catch (error) {
-    showError(error.message);
+    displayError(error);
   }
   setInterfaceBusy(false);
 }
@@ -669,7 +733,7 @@ async function load() {
       actionsFooter.classList.add("hidden");
     }
   } catch (error) {
-    showError(error.message);
+    displayError(error);
   }
 }
 
