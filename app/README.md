@@ -1,13 +1,13 @@
-# Editor de Ensaios — v3.2.0
+# Editor de Ensaios — v3.3.0
 
-Editor local para gravações de ensaios. Esta versão reorganiza o **ciclo de vida dos arquivos**; a interface, as regras de corte e o reconhecimento musical continuam os mesmos da v3.1.3.
+Editor local para gravações de ensaios. Esta versão corrige a geração de prévias e aprimora a revisão, reconhecimento e exportação dos ensaios.
 
 ## Pastas e ciclo de vida
 
 - `brutas/`: WAVs originais pendentes de análise.
 - `processadas/AAAA-MM-DD/temporarios/`: normalizações, `master.wav`, cortes e áudio intermediário. **Excluídos após a finalização bem-sucedida**.
 - `processadas/AAAA-MM-DD/*.wav`: WAVs originais, movidos apenas se a opção de mover estiver ativa e a finalização for validada. **Nunca são excluídos automaticamente.**
-- `output/`: MP4 e arquivos finais (WAV, capítulos, descrição, CSV). Preservados até exclusão manual.
+- `output/`: MP4 e TXT de descrição. O CSV técnico de segmentos fica em `_sistema/dados/relatorios/`.
 - `referencias/`: base de reconhecimento e índices, protegida de toda limpeza automática.
 - `_sistema/revisao/`: a revisão ativa e prévias MP3; permanece acessível após finalizar. `_sistema/dados/` guarda aprendizado.
 
@@ -26,7 +26,7 @@ Se a geração falhar, a pasta `temporarios` permanece intacta. Uma nova anális
 
 ## Atualização
 
-Execute o instalador/atualizador distribuído com a versão 3.2.0; ele preserva `.venv`, dados, revisões e referências. Em caso de erro, consulte os logs em `_sistema/revisao` e `_sistema/logs`.
+Execute o atualizador distribuído com a versão 3.3.0; ele preserva `.venv`, dados, revisões e referências. Em caso de erro, consulte os logs em `_sistema/revisao` e `_sistema/logs`.
 
 ## Verificações
 
