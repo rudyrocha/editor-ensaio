@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Iterable, Sequence
 
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.3.1"
 DATE_RE = re.compile(r"^(?P<date>\d{6})")
 AUDIO_EXTENSIONS = {".wav", ".wave"}
 
