@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Iterable, Sequence
 
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.2.1"
 DATE_RE = re.compile(r"^(?P<date>\d{6})")
 AUDIO_EXTENSIONS = {".wav", ".wave"}
 
@@ -213,8 +213,12 @@ def run_command(cmd: Sequence[str], *, capture: bool = False) -> subprocess.Comp
             text=True,
             encoding="utf-8",
             errors="replace",
-            stdout=subprocess.PIPE if capture else None,
-            stderr=subprocess.PIPE if capture else None,
+            # Evita janelas de console do FFmpeg/FFprobe no Windows e
+            # impede que teclas digitadas pelo usuário cheguem ao processo.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except FileNotFoundError as exc:
         raise EnsaioError(f"Programa não encontrado: {cmd[0]}") from exc
@@ -1547,7 +1551,7 @@ def identify_segments_from_references(
         )
     return {"referencias": len(references), "segmentos": identified, "aplicados": applied}
 
-def command_analyze(cfg: Config, *, verbose: bool, no_previews: bool) -> None:
+def command_analyze(cfg: Config, *, verbose: bool, no_previews: bool, recomecar: bool = False) -> None:
     ensure_directories(cfg)
     previous_backup = backup_previous_review(cfg)
     setup_logging(cfg.pasta_revisao / "ensaio.log", verbose)
@@ -1559,22 +1563,30 @@ def command_analyze(cfg: Config, *, verbose: bool, no_previews: bool) -> None:
     work_dir = work_dir_for_date(cfg, date_code)
     # Evita destruir o único áudio mestre de uma revisão ainda em andamento.
     if work_dir.exists() and any(work_dir.iterdir()):
-        current_manifest = cfg.pasta_revisao / "manifesto.json"
-        if current_manifest.exists():
-            try:
-                current_date = str(load_manifest(current_manifest).get("data_codigo", ""))
-            except (EnsaioError, ValueError, json.JSONDecodeError):
-                current_date = ""
-            if current_date == date_code:
-                raise EnsaioError(
-                    f"Já existe processamento em andamento para {date_code}: {work_dir}. "
-                    "A revisão foi preservada; não será apagada automaticamente."
-                )
-        # Não remover automaticamente intermediários de uma sessão antiga.
-        raise EnsaioError(
-            f"Já existe conteúdo temporário para {date_code}: {work_dir}. "
-            "A análise foi interrompida para evitar perda de arquivos."
-        )
+        if recomecar:
+            # Confirmação explícita do usuário: renomeia, nunca apaga, os
+            # intermediários remanescentes de uma análise interrompida.
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            recovered = work_dir.with_name(f"temporarios_interrompidos_{stamp}")
+            work_dir.rename(recovered)
+            logging.warning("Análise anterior preservada em %s", recovered)
+        else:
+            current_manifest = cfg.pasta_revisao / "manifesto.json"
+            if current_manifest.exists():
+                try:
+                    current_date = str(load_manifest(current_manifest).get("data_codigo", ""))
+                except (EnsaioError, ValueError, json.JSONDecodeError):
+                    current_date = ""
+                if current_date == date_code:
+                    raise EnsaioError(
+                        f"Já existe processamento em andamento para {date_code}: {work_dir}. "
+                        "A revisão foi preservada; não será apagada automaticamente."
+                    )
+            # Não remover automaticamente intermediários de uma sessão antiga.
+            raise EnsaioError(
+                f"Já existe conteúdo temporário para {date_code}: {work_dir}. "
+                "A análise foi interrompida para evitar perda de arquivos."
+            )
     work_dir.mkdir(parents=True, exist_ok=True)
 
     logging.info("Arquivos em ordem cronológica: %s", ", ".join(p.name for p in raw_files))
@@ -2198,6 +2210,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--verbose", action="store_true", help="Log detalhado.")
     parser.add_argument(
+        "--recomecar", action="store_true",
+        help="Preserva intermediários interrompidos com nome de recuperação e reinicia a análise.",
+    )
+    parser.add_argument(
         "--data",
         help="Data do ensaio para referências, em AAMMDD ou AAAA-MM-DD. Sem informar, usa a mais recente.",
     )
@@ -2220,7 +2236,7 @@ def main() -> int:
     try:
         cfg = load_config(args.config)
         if args.comando == "analisar":
-            command_analyze(cfg, verbose=args.verbose, no_previews=args.sem_previas)
+            command_analyze(cfg, verbose=args.verbose, no_previews=args.sem_previas, recomecar=args.recomecar)
         elif args.comando == "finalizar":
             command_finalize(cfg, verbose=args.verbose, no_move=args.nao_mover)
         elif args.comando == "preparar-referencias":
