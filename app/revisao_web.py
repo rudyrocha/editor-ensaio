@@ -330,9 +330,11 @@ class AppState:
             )
         except ensaio.EnsaioError as exc:
             raise ReviewError(str(exc)) from exc
+        # Preparar as novas prévias antes de confirmar a divisão/união no CSV.
+        # Se o FFmpeg falhar, as identificações e cortes já salvos permanecem.
+        ensaio.create_previews(self.cfg, self._master_audio(), ordered)
         self._backup_structure(label)
         ensaio.write_review_csv(self._review_path(), ordered)
-        ensaio.create_previews(self.cfg, self._master_audio(), ordered)
         return self.load_payload()
 
     @staticmethod
