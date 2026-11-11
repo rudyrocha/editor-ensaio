@@ -565,6 +565,14 @@ async function refreshOverview() {
 
 async function startAnalysis() {
   clearMessages();
+  // Não confiar no estado carregado ao abrir a página: um erro anterior pode
+  // ter deixado novos intermediários no disco.
+  try {
+    await refreshOverview();
+  } catch (error) {
+    showError("Não foi possível verificar a situação dos arquivos antes da análise: " + error.message);
+    return;
+  }
   if (state.overview?.revisao_disponivel) {
     if (!window.confirm("Iniciar uma nova análise? A revisão atual será preservada no histórico e substituída pela nova análise.")) return;
   }
@@ -638,6 +646,8 @@ async function pollStatus() {
     } else if (status.estado === "erro") {
       progressTitle.textContent = type === "analise" ? "A análise encontrou um erro" : "A finalização encontrou um erro";
       progressText.textContent = "Consulte o log abaixo.";
+      // Atualiza a informação de arquivos remanescentes mesmo quando falhar.
+      try { await refreshOverview(); } catch (_) {}
       showError(`${type === "analise" ? "A análise" : "A finalização"} terminou com erro ${status.codigo}.`);
     }
   } catch (error) {
