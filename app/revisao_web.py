@@ -178,6 +178,8 @@ class AppState:
                 "score_identificacao": segment.score_identificacao,
                 "segunda_opcao": segment.segunda_opcao,
                 "score_segunda_opcao": segment.score_segunda_opcao,
+                "terceira_opcao": segment.terceira_opcao,
+                "score_terceira_opcao": segment.score_terceira_opcao,
                 "identificacao_aplicada": segment.identificacao_aplicada,
                 "audio_url": (
                     f"/audio/{preview.get('arquivo', '')}?v="
@@ -227,10 +229,6 @@ class AppState:
                 delta_end = float(row.get("ajuste_fim", 0.0))
             except (TypeError, ValueError) as exc:
                 raise ReviewError(f"Ajuste de corte inválido na faixa {order}.") from exc
-            if abs(delta_start) > 120 or abs(delta_end) > 120:
-                raise ReviewError(
-                    f"Ajustes da faixa {order} excedem 120 segundos. Verifique os valores."
-                )
             original_start = (
                 segment.inicio_corte_original
                 if segment.inicio_corte_original is not None
@@ -251,8 +249,6 @@ class AppState:
                 raise ReviewError(f"A faixa {order} ficou com menos de 1 segundo.")
             if require_complete and include and not title:
                 raise ReviewError(f"Informe o nome da faixa {order}.")
-            if require_complete and include and not quality:
-                raise ReviewError(f"Avalie a qualidade da faixa {order}.")
 
             segment.incluir = include
             segment.titulo = title
@@ -330,9 +326,11 @@ class AppState:
             )
         except ensaio.EnsaioError as exc:
             raise ReviewError(str(exc)) from exc
+        # Primeiro gera os MP3. Se houver falha, a nova estrutura ainda não
+        # terá sido salva e os áudios/segmentos anteriores permanecem íntegros.
+        ensaio.create_previews(self.cfg, self._master_audio(), ordered)
         self._backup_structure(label)
         ensaio.write_review_csv(self._review_path(), ordered)
-        ensaio.create_previews(self.cfg, self._master_audio(), ordered)
         return self.load_payload()
 
     @staticmethod
@@ -385,6 +383,8 @@ class AppState:
             score_identificacao=0.0,
             segunda_opcao="",
             score_segunda_opcao=0.0,
+            terceira_opcao="",
+            score_terceira_opcao=0.0,
             identificacao_aplicada=False,
             classificacao="dividido_manual",
             observacao="",
@@ -453,6 +453,8 @@ class AppState:
             score_identificacao=0.0,
             segunda_opcao="",
             score_segunda_opcao=0.0,
+            terceira_opcao="",
+            score_terceira_opcao=0.0,
             identificacao_aplicada=False,
         )
         segments[target_index:target_index + 2] = [merged]
@@ -528,6 +530,7 @@ class AppState:
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                startupinfo=ensaio._hidden_startupinfo(),
                 text=True,
                 encoding="utf-8",
                 errors="replace",
