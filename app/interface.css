@@ -157,3 +157,21 @@ code { background: #edf1f5; padding: 2px 5px; border-radius: 5px; }
   .start-actions { justify-content: stretch; }
   .start-actions button { flex: 1; }
 }
+
+/* v3.3.0: validação no contexto e sugestões acessíveis */
+.track-alert {
+  background: #fff0ed;
+  color: #a3261c;
+  border-bottom: 2px solid #df7867;
+  padding: 13px 18px;
+  font-weight: 700;
+  scroll-margin-top: 24px;
+}
+.recognition-note { min-width: 0; }
+.recognition-note legend { font-size: 13px; font-weight: 700; padding: 0 4px; }
+.recognition-choices { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.recognition-choice { display: inline-flex; align-items: center; gap: 6px; background: #fff;
+  border: 1px solid #bcc9d6; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.recognition-choice:has(input:checked) { border-color: var(--accent); background: #f1f7ff; }
+.recognition-choice input { accent-color: var(--accent); }
+.recognition-choice small { color: var(--muted); white-space: nowrap; }
