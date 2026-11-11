@@ -1007,6 +1007,12 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(self.state.merge_segments(payload))
                 return
             if parsed.path == "/api/encerrar":
+                # Não abandonar uma análise ou finalização ainda em execução.
+                with self.state.lock:
+                    current = self.state.process
+                    active = current is not None and current.poll() is None
+                if active:
+                    raise ReviewError("Há um processamento em andamento. Aguarde sua conclusão para encerrar.")
                 self.send_json({"ok": True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
@@ -1054,23 +1060,24 @@ def main() -> int:
     try:
         cfg = ensaio.load_config(args.config)
         ensaio.ensure_directories(cfg)
-        if not args.nao_abrir:
-            existing = existing_editor_url(args.porta)
-            if existing:
+        # Porta fixa: nunca criar uma segunda instância na 8766, 8767 etc.
+        # Se já houver editor na porta configurada, apenas abrir sua página.
+        existing = existing_editor_url(args.porta)
+        if existing:
+            if not args.nao_abrir:
                 webbrowser.open(existing)
-                return 0
+            return 0
         state = AppState(script_dir, cfg, args.config)
         port = args.porta
-        server = None
-        for candidate in range(port, port + 20):
-            try:
-                server = Server(("127.0.0.1", candidate), Handler, state)
-                port = candidate
-                break
-            except OSError:
-                continue
-        if server is None:
-            raise ReviewError("Não foi possível encontrar uma porta local livre.")
+        try:
+            server = Server(("127.0.0.1", port), Handler, state)
+        except OSError as exc:
+            # Outro programa pode ocupar a porta. Não abrir uma nova instância
+            # em porta alternativa, pois ela permaneceria invisível e ativa.
+            raise ReviewError(
+                f"A porta local {port} está ocupada. Feche o processo anterior "
+                "do Editor (revisao_web.py) antes de abrir novamente."
+            ) from exc
         url = f"http://127.0.0.1:{port}/"
         print("\nINTERFACE DE REVISÃO")
         print(url)
@@ -1078,8 +1085,10 @@ def main() -> int:
         print("Use Ctrl+C para encerrar manualmente.\n")
         if not args.nao_abrir:
             threading.Timer(0.7, lambda: webbrowser.open(url)).start()
-        server.serve_forever(poll_interval=0.3)
-        server.server_close()
+        try:
+            server.serve_forever(poll_interval=0.3)
+        finally:
+            server.server_close()
         return 0
     except (ReviewError, ensaio.EnsaioError) as exc:
         print(f"\nERRO: {exc}", file=sys.stderr)
